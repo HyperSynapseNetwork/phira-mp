@@ -531,6 +531,16 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                     content: "想要查询房间？加入1049578201交流群即可查询！".to_string(),
                 }))
                 .await;
+
+                // enable live mode by sending a dummy monitor user
+                room.live.store(true, Ordering::SeqCst);
+                user.try_send(ServerCommand::OnJoinRoom(UserInfo {
+                    id: -1,
+                    name: "fake_monitor".to_string(),
+                    monitor: true,
+                }))
+                .await;
+
                 drop(map_guard);
 
                 send_room_event!(ServerCommand::CreateRoomEvent {
