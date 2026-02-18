@@ -181,9 +181,11 @@ pub enum ClientCommand {
 
     // Command for server console clients
     ConsoleAuthenticate { token: Varchar<32> },
-    RoomMonitorAuthenticate { key: Vec<u8> },
 
+    RoomMonitorAuthenticate { key: Vec<u8> },
     QueryRoomInfo,
+
+    GameMonitorAuthenticate { token: Varchar<32> },
 }
 
 #[derive(Clone, Debug, BinaryData)]

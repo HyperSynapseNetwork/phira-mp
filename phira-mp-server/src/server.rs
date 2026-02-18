@@ -53,6 +53,7 @@ pub struct ServerState {
 
     pub rooms: SafeMap<RoomId, Arc<Room>>,
     pub room_monitor: RwLock<Option<Weak<Session>>>,
+    pub game_monitors: SafeMap<i32, Weak<Session>>,
     pub lost_con_tx: mpsc::Sender<Uuid>,
 }
 
@@ -63,6 +64,18 @@ impl ServerState {
             .await
             .as_ref()
             .and_then(|p| p.upgrade())
+    }
+
+    pub async fn get_game_monitor(&self, id: i32) -> Option<Arc<Session>> {
+        self.game_monitors
+            .read()
+            .await
+            .get(&id)
+            .and_then(|p| p.upgrade())
+    }
+
+    pub async fn set_game_monitor(&self, id: i32, s: Weak<Session>) {
+        self.game_monitors.write().await.insert(id, s);
     }
 }
 
@@ -86,6 +99,7 @@ impl From<TcpListener> for Server {
 
             rooms: SafeMap::default(),
             room_monitor: RwLock::new(None),
+            game_monitors: SafeMap::default(),
 
             lost_con_tx,
         });
