@@ -416,9 +416,10 @@ async fn session_handler(
             let err = match authenticate(id, token.into_inner()).await {
                 Ok(resp) => {
                     if server.get_game_monitor(resp.id).await.is_some() {
-                        warn!("more than one game monitor session for user {}", resp.id);
+                        warn!("More than one game monitor session for user {}", resp.id);
                         Some("more than one game monitor".to_string())
                     } else {
+                        info!("New game monitor of user {}", resp.id);
                         let user = Arc::new(User::new(
                             resp.id,
                             resp.name,
@@ -426,22 +427,27 @@ async fn session_handler(
                             Arc::clone(&server),
                         ));
                         let _ = tx.send((Arc::clone(&user), SessionCategory::GameMonitor));
+                        let _ = send_tx
+                            .send(ServerCommand::Authenticate(Ok((user.to_info(), None))))
+                            .await;
                         this_inited.notified().await;
 
                         let weak_this = Arc::downgrade(this.get().unwrap());
                         user.set_session(weak_this.clone()).await;
                         server.set_game_monitor(resp.id, weak_this).await;
+
+                        waiting_for_authenticate.store(false, Ordering::SeqCst);
                         None
                     }
                 }
                 Err(err) => Some(err.to_string()),
             };
             if let Some(str) = err {
-                warn!("failed to authenticate: {str}");
+                warn!("Failed to authenticate: {str}");
                 let _ = send_tx.send(ServerCommand::Authenticate(Err(str))).await;
                 panicked.store(true, Ordering::SeqCst);
                 if let Err(err) = server.lost_con_tx.send(id).await {
-                    error!("failed to mark lost connection ({id}): {err:?}");
+                    error!("Failed to mark lost connection ({id}): {err:?}");
                 }
             }
         }
@@ -632,9 +638,10 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                 if !matches!(*room.state.read().await, InternalRoomState::SelectChart) {
                     bail!(tl!("join-game-ongoing"));
                 }
-                if monitor && !user.can_monitor() {
-                    bail!(tl!("join-cant-monitor"));
-                }
+                // remove monitor permission checking
+                // if monitor && !user.can_monitor() {
+                //     bail!(tl!("join-cant-monitor"));
+                // }
                 if !room.add_user(Arc::downgrade(&user), monitor).await {
                     bail!(tl!("join-room-full"));
                 }
