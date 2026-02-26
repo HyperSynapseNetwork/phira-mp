@@ -421,8 +421,8 @@ async fn session_handler(
                     } else {
                         info!("New game monitor of user {}", resp.id);
                         let user = Arc::new(User::new(
-                            resp.id,
-                            resp.name,
+                            -resp.id,
+                            format!("{} (monitor)", resp.name),
                             resp.language.parse().map(Language).unwrap_or_default(),
                             Arc::clone(&server),
                         ));
@@ -582,6 +582,8 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                         bail!(tl!("create-id-occupied"));
                     }
                 }
+                drop(map_guard);
+
                 room.send(Message::CreateRoom { user: user.id }).await;
                 user.try_send(ServerCommand::Message(Message::Chat {
                     user: 1,
@@ -593,17 +595,6 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                     content: "想要查询房间？加入1049578201交流群即可查询！".to_string(),
                 }))
                 .await;
-
-                // enable live mode by sending a dummy monitor user
-                room.live.store(true, Ordering::SeqCst);
-                user.try_send(ServerCommand::OnJoinRoom(UserInfo {
-                    id: -1,
-                    name: "fake_monitor".to_string(),
-                    monitor: true,
-                }))
-                .await;
-
-                drop(map_guard);
 
                 send_room_event!(ServerCommand::CreateRoomEvent {
                     room: id.clone(),
@@ -638,10 +629,9 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                 if !matches!(*room.state.read().await, InternalRoomState::SelectChart) {
                     bail!(tl!("join-game-ongoing"));
                 }
-                // remove monitor permission checking
-                // if monitor && !user.can_monitor() {
-                //     bail!(tl!("join-cant-monitor"));
-                // }
+                if monitor && !category_matches!(SessionCategory::GameMonitor) {
+                    bail!(tl!("join-cant-monitor"));
+                }
                 if !room.add_user(Arc::downgrade(&user), monitor).await {
                     bail!(tl!("join-room-full"));
                 }
@@ -840,7 +830,7 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
         }
         ClientCommand::Ready => {
             let res: Result<()> = async move {
-                if !category_matches!(SessionCategory::Normal) {
+                if !category_matches!(SessionCategory::Normal | SessionCategory::GameMonitor) {
                     bail!("invalid command for this session");
                 }
                 get_room!(room);
