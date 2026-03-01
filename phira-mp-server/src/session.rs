@@ -237,7 +237,7 @@ impl Drop for Session {
     }
 }
 
-async fn authenticate(id: Uuid, token: String) -> Result<AuthUserInfo> {
+async fn authenticate(id: Uuid, token: &str) -> Result<AuthUserInfo> {
     debug!("session {id}: authenticate {token}");
     reqwest::Client::new()
         .get(format!("{HOST}/me"))
@@ -289,15 +289,28 @@ async fn session_handler(
         return;
     }
     match cmd {
-        ClientCommand::Authenticate { token } => {
+        ClientCommand::Authenticate { ref token }
+        | ClientCommand::GameMonitorAuthenticate { ref token } => {
             // normal game client
             let Some(tx) = tx else { return };
-            match authenticate(id, token.into_inner()).await {
+            match authenticate(id, token).await {
                 Ok(resp) => {
                     let mut users_guard = server.users.write().await;
+                    let (cat, resp) = match cmd {
+                        ClientCommand::Authenticate { .. } => (SessionCategory::Normal, resp),
+                        ClientCommand::GameMonitorAuthenticate { .. } => (
+                            SessionCategory::GameMonitor,
+                            AuthUserInfo {
+                                id: -resp.id,
+                                name: resp.name + " (monitor)",
+                                language: resp.language,
+                            },
+                        ),
+                        _ => unreachable!(),
+                    };
                     if let Some(user) = users_guard.get(&resp.id) {
                         info!("reconnect");
-                        let _ = tx.send((Arc::clone(user), SessionCategory::Normal));
+                        let _ = tx.send((Arc::clone(user), cat));
                         this_inited.notified().await;
                         user.set_session(Arc::downgrade(this.get().unwrap())).await;
                     } else {
@@ -307,7 +320,7 @@ async fn session_handler(
                             resp.language.parse().map(Language).unwrap_or_default(),
                             Arc::clone(&server),
                         ));
-                        let _ = tx.send((Arc::clone(&user), SessionCategory::Normal));
+                        let _ = tx.send((Arc::clone(&user), cat));
                         this_inited.notified().await;
                         user.set_session(Arc::downgrade(this.get().unwrap())).await;
                         users_guard.insert(resp.id, user);
@@ -338,10 +351,10 @@ async fn session_handler(
                 }
             }
         }
-        ClientCommand::ConsoleAuthenticate { token } => {
+        ClientCommand::ConsoleAuthenticate { ref token } => {
             // a server console client
             let Some(tx) = tx else { return };
-            match authenticate(id, token.into_inner()).await {
+            match authenticate(id, token).await {
                 Ok(resp) => {
                     let user = Arc::new(User::new(
                         resp.id,
@@ -408,47 +421,6 @@ async fn session_handler(
                 server.room_monitor.write().await.replace(weak_this);
 
                 waiting_for_authenticate.store(false, Ordering::SeqCst);
-            }
-        }
-        ClientCommand::GameMonitorAuthenticate { token } => {
-            // game monitor client
-            let Some(tx) = tx else { return };
-            let err = match authenticate(id, token.into_inner()).await {
-                Ok(resp) => {
-                    if server.get_game_monitor(resp.id).await.is_some() {
-                        warn!("More than one game monitor session for user {}", resp.id);
-                        Some("more than one game monitor".to_string())
-                    } else {
-                        info!("New game monitor of user {}", resp.id);
-                        let user = Arc::new(User::new(
-                            -resp.id,
-                            format!("{} (monitor)", resp.name),
-                            resp.language.parse().map(Language).unwrap_or_default(),
-                            Arc::clone(&server),
-                        ));
-                        let _ = tx.send((Arc::clone(&user), SessionCategory::GameMonitor));
-                        let _ = send_tx
-                            .send(ServerCommand::Authenticate(Ok((user.to_info(), None))))
-                            .await;
-                        this_inited.notified().await;
-
-                        let weak_this = Arc::downgrade(this.get().unwrap());
-                        user.set_session(weak_this.clone()).await;
-                        server.set_game_monitor(resp.id, weak_this).await;
-
-                        waiting_for_authenticate.store(false, Ordering::SeqCst);
-                        None
-                    }
-                }
-                Err(err) => Some(err.to_string()),
-            };
-            if let Some(str) = err {
-                warn!("Failed to authenticate: {str}");
-                let _ = send_tx.send(ServerCommand::Authenticate(Err(str))).await;
-                panicked.store(true, Ordering::SeqCst);
-                if let Err(err) = server.lost_con_tx.send(id).await {
-                    error!("Failed to mark lost connection ({id}): {err:?}");
-                }
             }
         }
         _ => warn!("packet before authentication, ignoring: {cmd:?}"),

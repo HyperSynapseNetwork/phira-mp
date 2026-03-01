@@ -3,7 +3,7 @@ use anyhow::{bail, Result};
 use half::f16;
 use phira_mp_macros::BinaryData;
 use serde_json::Value;
-use std::{collections::HashMap, fmt::Display, sync::Arc};
+use std::{collections::HashMap, fmt::Display, ops::Deref, sync::Arc};
 
 pub type SResult<T> = Result<T, String>;
 
@@ -73,6 +73,12 @@ impl<const N: usize> BinaryData for Varchar<N> {
 
     fn write_binary(&self, w: &mut BinaryWriter<'_>) -> Result<()> {
         w.write(&self.0)
+    }
+}
+impl<const N: usize> Deref for Varchar<N> {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
     }
 }
 
