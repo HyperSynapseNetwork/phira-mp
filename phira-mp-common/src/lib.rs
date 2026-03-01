@@ -22,7 +22,8 @@ where
 #[cfg(feature = "stream")]
 mod stream_impl {
     use crate::{decode_packet, encode_packet, BinaryData};
-    use anyhow::{bail, Error, Result};
+    use anyhow::{anyhow, bail, Error, Result};
+    use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
     use std::{
         future::Future, marker::PhantomData, os::unix::ffi::OsStrExt, sync::Arc, time::Duration,
     };
@@ -185,11 +186,19 @@ mod stream_impl {
     }
 
     pub fn generate_secret_key(info: &str, len: usize) -> Result<Vec<u8>> {
-        let ikm = std::env::var_os("HSN_SECRET_KEY")
-            .unwrap_or_else(|| "some_random_secret_key_for_debugging".into());
-        let salt = b"some$random#salt";
+        let original = std::env::var_os("HSN_SECRET_KEY").unwrap_or_else(|| {
+            warn!("HSN_SECRET_KEY is not set, using default value");
+            "some_random_secret_key_for_debugging".into()
+        });
+        let salt = SaltString::encode_b64(b"some$random#salt")
+            .map_err(|e| anyhow!("failed to generate salt string: {e}"))?;
+        let ikm = Argon2::default()
+            .hash_password(original.as_bytes(), &salt)
+            .map_err(|e| anyhow!("error calculating hash: {e}"))?
+            .hash
+            .ok_or_else(|| anyhow!("error calculating hash"))?;
 
-        let h = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm.as_bytes());
+        let h = hkdf::Hkdf::<sha2::Sha256>::new(None, ikm.as_bytes());
         let mut okm = vec![0u8; len];
         h.expand(info.as_bytes(), &mut okm)?;
         Ok(okm)

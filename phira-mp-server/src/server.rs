@@ -1,8 +1,9 @@
 use crate::{vacant_entry, IdMap, Room, SafeMap, Session, User};
 use anyhow::Result;
-use phira_mp_common::RoomId;
+use phira_mp_common::{generate_secret_key, RoomId};
 use serde::{Deserialize, Serialize};
 use std::{
+    env,
     fs::File,
     sync::{Arc, Weak},
 };
@@ -48,6 +49,8 @@ pub struct Record {
 
 pub struct ServerState {
     pub config: ServerConfig,
+    pub room_monitor_key: Vec<u8>,
+
     pub sessions: IdMap<Arc<Session>>,
     pub users: SafeMap<i32, Arc<User>>,
 
@@ -94,6 +97,8 @@ impl From<TcpListener> for Server {
             .unwrap_or_default();
         let state = Arc::new(ServerState {
             config,
+            room_monitor_key: generate_secret_key("room_monitor", 64).unwrap(),
+
             sessions: IdMap::default(),
             users: SafeMap::default(),
 
@@ -103,6 +108,8 @@ impl From<TcpListener> for Server {
 
             lost_con_tx,
         });
+        // remove env for safety
+        env::remove_var("HSN_SECRET_KEY");
         let lost_con_handle = tokio::spawn({
             let state = Arc::clone(&state);
             async move {

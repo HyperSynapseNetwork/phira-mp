@@ -4,8 +4,8 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use phira_mp_common::{
-    generate_secret_key, ClientCommand, JoinRoomResponse, Message, RoomState, ServerCommand,
-    Stream, UserInfo, HEARTBEAT_DISCONNECT_TIMEOUT,
+    ClientCommand, JoinRoomResponse, Message, RoomState, ServerCommand, Stream, UserInfo,
+    HEARTBEAT_DISCONNECT_TIMEOUT,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -388,7 +388,7 @@ async fn session_handler(
             let Some(tx) = tx else { return };
             let err = if server.get_room_monitor().await.is_some() {
                 Some("more than one room monitor")
-            } else if generate_secret_key("room_monitor", 64).is_ok_and(|k| k == key) {
+            } else if server.room_monitor_key == key {
                 None
             } else {
                 Some("secret key mismatch")
