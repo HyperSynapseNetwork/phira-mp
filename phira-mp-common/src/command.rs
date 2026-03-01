@@ -5,7 +5,7 @@ use phira_mp_macros::BinaryData;
 use serde_json::Value;
 use std::{collections::HashMap, fmt::Display, sync::Arc};
 
-type SResult<T> = Result<T, String>;
+pub type SResult<T> = Result<T, String>;
 
 #[derive(Debug, Clone)]
 pub struct CompactPos {
@@ -318,28 +318,8 @@ pub enum ServerCommand {
 
     // command for console clients
     RoomResponse(SResult<(HashMap<RoomId, Value>, HashMap<i32, RoomId>)>),
-
-    CreateRoomEvent {
-        room: RoomId,
+    RoomEvent {
+        event_type: String,
         data: Value,
-    },
-    UpdateRoomEvent {
-        room: RoomId,
-        data: Value,
-    },
-    JoinRoomEvent {
-        room: RoomId,
-        user: i32,
-    },
-    LeaveRoomEvent {
-        room: RoomId,
-        user: i32,
-    },
-    PlayerScoreEvent {
-        room: RoomId,
-        record: Value,
-    },
-    StartRoundEvent {
-        room: RoomId,
     },
 }

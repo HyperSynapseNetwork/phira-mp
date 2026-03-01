@@ -2,6 +2,7 @@ use crate::{Chart, Record, User};
 use anyhow::{bail, Result};
 use phira_mp_common::{ClientRoomState, Message, RoomId, RoomState, ServerCommand};
 use rand::{seq::SliceRandom, thread_rng};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -39,6 +40,12 @@ impl InternalRoomState {
     }
 }
 
+#[derive(Serialize)]
+pub struct RoundInfo {
+    chart: i32,
+    records: Vec<(i32, Record)>,
+}
+
 pub struct Room {
     pub id: RoomId,
     pub host: RwLock<Weak<User>>,
@@ -51,6 +58,7 @@ pub struct Room {
     users: RwLock<Vec<Weak<User>>>,
     monitors: RwLock<Vec<Weak<User>>>,
     pub chart: RwLock<Option<Chart>>,
+    pub rounds: RwLock<Vec<RoundInfo>>,
 }
 
 impl Room {
@@ -67,6 +75,7 @@ impl Room {
             users: vec![host].into(),
             monitors: Vec::new().into(),
             chart: RwLock::default(),
+            rounds: RwLock::default(),
         }
     }
 
@@ -263,9 +272,17 @@ impl Room {
                     drop(guard);
                     // TODO print results
                     self.send(Message::GameEnd).await;
-                    // dbg!(2);
-                    *self.state.write().await = InternalRoomState::SelectChart;
-                    // dbg!(3);
+                    let mut guard = self.state.write().await;
+                    if let InternalRoomState::Playing { results, .. } = &mut *guard {
+                        self.rounds.write().await.push(RoundInfo {
+                            chart: self.chart.read().await.as_ref().map_or(-1, |c| c.id),
+                            records: results.drain().collect(),
+                        });
+                        *guard = InternalRoomState::SelectChart;
+                    } else {
+                        unreachable!();
+                    }
+                    drop(guard);
                     if self.is_cycle() {
                         debug!(room = self.id.to_string(), "cycling");
                         let host = Weak::clone(&*self.host.read().await);
@@ -304,6 +321,7 @@ impl Room {
                 InternalRoomState::SelectChart => "SELECTING_CHART",
                 InternalRoomState::WaitForReady { .. } => "WAITING_FOR_READY",
             },
+            "rounds": &*self.rounds.read().await,
         })
     }
 }
