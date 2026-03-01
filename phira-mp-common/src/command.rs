@@ -5,7 +5,7 @@ use phira_mp_macros::BinaryData;
 use serde_json::Value;
 use std::{collections::HashMap, fmt::Display, sync::Arc};
 
-type SResult<T> = Result<T, String>;
+pub type SResult<T> = Result<T, String>;
 
 #[derive(Debug, Clone)]
 pub struct CompactPos {

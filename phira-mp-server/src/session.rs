@@ -820,10 +820,6 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                     full_combo: res.full_combo,
                 })
                 .await;
-                send_room_event!("player_score", {
-                    "room": room.id.to_string(),
-                    "record": serde_json::to_value(&res).unwrap()
-                });
                 let mut guard = room.state.write().await;
                 if let InternalRoomState::Playing { results, aborted } = guard.deref_mut() {
                     if aborted.contains(&user.id) {
