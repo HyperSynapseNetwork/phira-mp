@@ -41,7 +41,7 @@ fn vacant_entry<V>(map: &mut HashMap<Uuid, V>) -> VacantEntry<'_, Uuid, V> {
 
 pub fn init_log(file: &str) -> Result<WorkerGuard> {
     use std::env;
-    use tracing::{metadata::LevelFilter, Level};
+    use tracing::{Level, metadata::LevelFilter};
     use tracing_log::LogTracer;
     use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 

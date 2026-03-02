@@ -159,7 +159,7 @@ mod stream_impl {
                 send_task_handle,
                 recv_task_handle,
 
-                _marker: PhantomData::default(),
+                _marker: PhantomData,
             })
         }
 
