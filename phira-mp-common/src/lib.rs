@@ -4,19 +4,7 @@ pub use bin::*;
 mod command;
 pub use command::*;
 
-use anyhow::{Error, Result, bail};
-use std::{future::Future, marker::PhantomData, sync::Arc, time::Duration};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-    sync::mpsc,
-    task::JoinHandle,
-};
-use tracing::{error, trace, warn};
-
-pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
-pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(2);
-pub const HEARTBEAT_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+use anyhow::Result;
 
 pub fn encode_packet(payload: &impl BinaryData, vec: &mut Vec<u8>) {
     BinaryWriter::new(vec).write(payload).unwrap();
@@ -33,9 +21,9 @@ where
 
 #[cfg(feature = "stream")]
 mod stream_impl {
-    use crate::{decode_packet, encode_packet, BinaryData};
-    use anyhow::{anyhow, bail, Error, Result};
-    use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+    use crate::{BinaryData, decode_packet, encode_packet};
+    use anyhow::{Error, Result, anyhow, bail};
+    use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
     use std::{
         future::Future, marker::PhantomData, os::unix::ffi::OsStrExt, sync::Arc, time::Duration,
     };

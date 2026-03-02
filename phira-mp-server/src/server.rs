@@ -1,6 +1,6 @@
 use crate::{IdMap, Room, SafeMap, Session, User, vacant_entry};
 use anyhow::Result;
-use phira_mp_common::{generate_secret_key, RoomId};
+use phira_mp_common::{RoomId, generate_secret_key};
 use serde::{Deserialize, Serialize};
 use std::{
     env,
@@ -9,7 +9,7 @@ use std::{
 };
 use tokio::{
     net::TcpListener,
-    sync::{mpsc, RwLock},
+    sync::{RwLock, mpsc},
     task::JoinHandle,
 };
 use tracing::{info, warn};
@@ -109,7 +109,9 @@ impl From<TcpListener> for Server {
             lost_con_tx,
         });
         // remove env for safety
-        env::remove_var("HSN_SECRET_KEY");
+        unsafe {
+            env::remove_var("HSN_SECRET_KEY");
+        }
         let lost_con_handle = tokio::spawn({
             let state = Arc::clone(&state);
             async move {
