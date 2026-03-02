@@ -1,8 +1,9 @@
 use crate::{vacant_entry, IdMap, Room, SafeMap, Session, User};
 use anyhow::Result;
-use phira_mp_common::RoomId;
+use phira_mp_common::{generate_secret_key, RoomId};
 use serde::{Deserialize, Serialize};
 use std::{
+    env,
     fs::File,
     sync::{Arc, Weak},
 };
@@ -48,11 +49,14 @@ pub struct Record {
 
 pub struct ServerState {
     pub config: ServerConfig,
+    pub room_monitor_key: Vec<u8>,
+
     pub sessions: IdMap<Arc<Session>>,
     pub users: SafeMap<i32, Arc<User>>,
 
     pub rooms: SafeMap<RoomId, Arc<Room>>,
     pub room_monitor: RwLock<Option<Weak<Session>>>,
+    pub game_monitors: SafeMap<i32, Weak<Session>>,
     pub lost_con_tx: mpsc::Sender<Uuid>,
 }
 
@@ -63,6 +67,18 @@ impl ServerState {
             .await
             .as_ref()
             .and_then(|p| p.upgrade())
+    }
+
+    pub async fn get_game_monitor(&self, id: i32) -> Option<Arc<Session>> {
+        self.game_monitors
+            .read()
+            .await
+            .get(&id)
+            .and_then(|p| p.upgrade())
+    }
+
+    pub async fn set_game_monitor(&self, id: i32, s: Weak<Session>) {
+        self.game_monitors.write().await.insert(id, s);
     }
 }
 
@@ -81,14 +97,19 @@ impl From<TcpListener> for Server {
             .unwrap_or_default();
         let state = Arc::new(ServerState {
             config,
+            room_monitor_key: generate_secret_key("room_monitor", 64).unwrap(),
+
             sessions: IdMap::default(),
             users: SafeMap::default(),
 
             rooms: SafeMap::default(),
             room_monitor: RwLock::new(None),
+            game_monitors: SafeMap::default(),
 
             lost_con_tx,
         });
+        // remove env for safety
+        env::remove_var("HSN_SECRET_KEY");
         let lost_con_handle = tokio::spawn({
             let state = Arc::clone(&state);
             async move {
