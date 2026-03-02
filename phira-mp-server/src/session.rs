@@ -3,15 +3,15 @@ use crate::{
     l10n::{LANGUAGE, Language},
     tl,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use phira_mp_common::{
-    ClientCommand, JoinRoomResponse, Message, RoomState, ServerCommand, Stream, UserInfo,
-    HEARTBEAT_DISCONNECT_TIMEOUT,
+    ClientCommand, HEARTBEAT_DISCONNECT_TIMEOUT, JoinRoomResponse, Message, RoomState,
+    ServerCommand, Stream, UserInfo,
 };
 use serde::Deserialize;
 use serde_json::json;
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     ops::DerefMut,
     sync::{
         Arc, Weak,
@@ -240,6 +240,9 @@ impl Drop for Session {
 
 async fn authenticate(id: Uuid, token: &str) -> Result<AuthUserInfo> {
     debug!("session {id}: authenticate {token}");
+    if token.len() > 32 {
+        bail!("invalid token length");
+    }
     reqwest::Client::new()
         .get(format!("{HOST}/me"))
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
