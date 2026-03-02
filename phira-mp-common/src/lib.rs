@@ -4,7 +4,19 @@ pub use bin::*;
 mod command;
 pub use command::*;
 
-use anyhow::Result;
+use anyhow::{Error, Result, bail};
+use std::{future::Future, marker::PhantomData, sync::Arc, time::Duration};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+    sync::mpsc,
+    task::JoinHandle,
+};
+use tracing::{error, trace, warn};
+
+pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
+pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(2);
+pub const HEARTBEAT_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn encode_packet(payload: &impl BinaryData, vec: &mut Vec<u8>) {
     BinaryWriter::new(vec).write(payload).unwrap();

@@ -13,8 +13,8 @@ use anyhow::Result;
 use clap::Parser;
 use std::{
     collections::{
-        hash_map::{Entry, VacantEntry},
         HashMap,
+        hash_map::{Entry, VacantEntry},
     },
     net::{Ipv6Addr, SocketAddr},
     path::Path,
@@ -43,7 +43,7 @@ pub fn init_log(file: &str) -> Result<WorkerGuard> {
     use std::env;
     use tracing::{metadata::LevelFilter, Level};
     use tracing_log::LogTracer;
-    use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
+    use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
     let log_dir_str = env::var("HSN_LOGDIR").unwrap_or("log".to_string());
     let log_dir = Path::new(&log_dir_str);
