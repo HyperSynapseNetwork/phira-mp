@@ -149,34 +149,38 @@ struct AuthUserInfo {
     pub language: String,
 }
 
+struct SessionContext {
+    this: OnceCell<Arc<Session>>,
+    this_inited: Notify,
+    last_recv: Mutex<Instant>,
+    waiting_for_authenticate: AtomicBool,
+    panicked: AtomicBool,
+}
+
 impl Session {
     pub async fn new(id: Uuid, stream: TcpStream, server: Arc<ServerState>) -> Result<Arc<Self>> {
         stream.set_nodelay(true)?;
-        let this = Arc::new(OnceCell::<Arc<Session>>::new());
-        let this_inited = Arc::new(Notify::new());
+        let ctx = Arc::new(SessionContext {
+            this: OnceCell::new(),
+            this_inited: Notify::new(),
+            last_recv: Mutex::new(Instant::now()),
+            waiting_for_authenticate: AtomicBool::new(true),
+            panicked: AtomicBool::new(false),
+        });
         let (tx, rx) = oneshot::channel::<(Arc<User>, SessionCategory)>();
-        let last_recv: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now()));
         let stream = Stream::<ServerCommand, ClientCommand>::new(
             None,
             stream,
             Box::new({
-                let this = Arc::clone(&this);
-                let this_inited = Arc::clone(&this_inited);
-                let mut tx = Some(tx);
+                let ctx = Arc::clone(&ctx);
                 let server = Arc::clone(&server);
-                let last_recv = Arc::clone(&last_recv);
-                let waiting_for_authenticate = Arc::new(AtomicBool::new(true));
-                let panicked = Arc::new(AtomicBool::new(false));
+                let mut tx = Some(tx);
                 move |send_tx, cmd| {
                     session_handler(
                         id,
-                        Arc::clone(&this),
-                        Arc::clone(&this_inited),
-                        tx.take(),
                         Arc::clone(&server),
-                        Arc::clone(&last_recv),
-                        Arc::clone(&waiting_for_authenticate),
-                        Arc::clone(&panicked),
+                        Arc::clone(&ctx),
+                        tx.take(),
                         send_tx,
                         cmd,
                     )
@@ -185,17 +189,16 @@ impl Session {
         )
         .await?;
         let monitor_task_handle = tokio::spawn({
+            let ctx = Arc::clone(&ctx);
             let server = Arc::clone(&server);
-            let last_recv = Arc::clone(&last_recv);
             async move {
+                let last_recv = &ctx.last_recv;
                 loop {
                     let recv = *last_recv.lock().await;
                     time::sleep_until((recv + HEARTBEAT_DISCONNECT_TIMEOUT).into()).await;
-
                     if *last_recv.lock().await + HEARTBEAT_DISCONNECT_TIMEOUT > Instant::now() {
                         continue;
                     }
-
                     if let Err(err) = server.lost_con_tx.send(id).await {
                         error!("failed to mark lost connection ({id}): {err:?}");
                     }
@@ -212,8 +215,8 @@ impl Session {
             user,
             monitor_task_handle,
         });
-        let _ = this.set(Arc::clone(&res));
-        this_inited.notify_one();
+        let _ = ctx.this.set(Arc::clone(&res));
+        ctx.this_inited.notify_one();
         Ok(res)
     }
 
@@ -258,16 +261,20 @@ async fn authenticate(id: Uuid, token: &str) -> Result<AuthUserInfo> {
 
 async fn session_handler(
     id: Uuid,
-    this: Arc<OnceCell<Arc<Session>>>,
-    this_inited: Arc<Notify>,
-    tx: Option<oneshot::Sender<(Arc<User>, SessionCategory)>>,
     server: Arc<ServerState>,
-    last_recv: Arc<Mutex<Instant>>,
-    waiting_for_authenticate: Arc<AtomicBool>,
-    panicked: Arc<AtomicBool>,
+    ctx: Arc<SessionContext>,
+    tx: Option<oneshot::Sender<(Arc<User>, SessionCategory)>>,
     send_tx: Arc<tokio::sync::mpsc::Sender<ServerCommand>>,
     cmd: ClientCommand,
 ) {
+    let SessionContext {
+        this,
+        this_inited,
+        last_recv,
+        waiting_for_authenticate,
+        panicked,
+    } = ctx.as_ref();
+
     if panicked.load(Ordering::SeqCst) {
         return;
     }
@@ -281,13 +288,12 @@ async fn session_handler(
         if let Some(resp) = LANGUAGE
             .scope(Arc::new(user.lang.clone()), process(user, cmd))
             .await
+            && let Err(err) = send_tx.send(resp).await
         {
-            if let Err(err) = send_tx.send(resp).await {
-                error!("failed to handle message, aborting connection {id}: {err:?}",);
-                panicked.store(true, Ordering::SeqCst);
-                if let Err(err) = server.lost_con_tx.send(id).await {
-                    error!("failed to mark lost connection ({id}): {err:?}");
-                }
+            error!("failed to handle message, aborting connection {id}: {err:?}",);
+            panicked.store(true, Ordering::SeqCst);
+            if let Err(err) = server.lost_con_tx.send(id).await {
+                error!("failed to mark lost connection ({id}): {err:?}");
             }
         }
         return;
@@ -900,10 +906,7 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                     drop(guard);
                     room.check_all_ready().await;
 
-                    if matches!(
-                        *room.state.read().await,
-                        InternalRoomState::SelectChart { .. }
-                    ) {
+                    if matches!(*room.state.read().await, InternalRoomState::SelectChart) {
                         if let Some(round) = room.rounds.read().await.last() {
                             send_room_event!("new_round", {
                                 "room": room.id.to_string(),
