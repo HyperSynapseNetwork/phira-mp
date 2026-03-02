@@ -4,9 +4,6 @@ on:
     branches: ["**"]
   pull_request:
 
-env:
-  RUST_TOOLCHAIN: stable
-
 jobs:
   fmt:
     runs-on: ubuntu-latest
