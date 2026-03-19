@@ -1,15 +1,14 @@
 use crate::{
-    Chart, InternalRoomState, Record, Room, ServerState,
+    Chart, InternalRoomState, Room, ServerState,
     l10n::{LANGUAGE, Language},
     tl,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use phira_mp_common::{
-    ClientCommand, HEARTBEAT_DISCONNECT_TIMEOUT, JoinRoomResponse, Message, RoomState,
-    ServerCommand, Stream, UserInfo,
+    ClientCommand, HEARTBEAT_DISCONNECT_TIMEOUT, JoinRoomResponse, Message, PartialRoomData,
+    Record, RoomEvent, RoomState, ServerCommand, Stream, StrippedRoomState, UserInfo,
 };
 use serde::Deserialize;
-use serde_json::json;
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
     ops::DerefMut,
@@ -347,6 +346,9 @@ async fn session_handler(
                             room_state,
                         ))))
                         .await;
+                    if let Some(p) = user.server.get_room_monitor().await {
+                        p.try_send(ServerCommand::UserVisit(user.id)).await;
+                    }
                     waiting_for_authenticate.store(false, Ordering::SeqCst);
                 }
                 Err(err) => {
@@ -476,12 +478,11 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
         };
     }
     macro_rules! send_room_event {
-        ($event_type:literal, $data:tt $(,)?) => {
+        ($event_type:ident $data:tt $(,)?) => {
             if let Some(p) = user.server.get_room_monitor().await {
-                p.try_send(ServerCommand::RoomEvent {
-                    event_type: $event_type.to_string(),
-                    data: json!($data),
-                })
+                p.try_send(ServerCommand::RoomEvent(
+                    RoomEvent::$event_type $data
+                ))
                 .await;
             }
         };
@@ -582,9 +583,9 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                 }))
                 .await;
 
-                send_room_event!("create_room", {
-                    "room": id.to_string(),
-                    "data": room.into_json().await,
+                send_room_event!(CreateRoom {
+                    room: id.clone(),
+                    data: room.into_data().await,
                 });
                 *room_guard = Some(room);
                 info!(user = user.id, room = id.to_string(), "user create room");
@@ -640,9 +641,9 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                 .await;
 
                 if !monitor {
-                    send_room_event!("join_room", {
-                        "room": id.to_string(),
-                        "user": user.id,
+                    send_room_event!(JoinRoom {
+                        room: id,
+                        user: user.id,
                     });
                 }
                 *room_guard = Some(Arc::clone(&room));
@@ -680,9 +681,9 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                     user.server.rooms.write().await.remove(&room.id);
                 }
 
-                send_room_event!("leave_room", {
-                    "room": room.id.to_string(),
-                    "user": user.id,
+                send_room_event!(LeaveRoom {
+                    room: room.id.clone(),
+                    user: user.id,
                 });
                 Ok(())
             }
@@ -705,9 +706,12 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                 room.locked.store(lock, Ordering::SeqCst);
                 room.send(Message::LockRoom { lock }).await;
 
-                send_room_event!("update_room", {
-                    "room": room.id.to_string(),
-                    "data": json!({"lock": lock}),
+                send_room_event!(UpdateRoom {
+                    room: room.id.clone(),
+                    data: PartialRoomData {
+                        lock: Some(lock),
+                        ..Default::default()
+                    },
                 });
                 Ok(())
             }
@@ -730,9 +734,12 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                 room.cycle.store(cycle, Ordering::SeqCst);
                 room.send(Message::CycleRoom { cycle }).await;
 
-                send_room_event!("update_room", {
-                    "room": room.id.to_string(),
-                    "data": json!({"cycle": cycle})
+                send_room_event!(UpdateRoom {
+                    room: room.id.clone(),
+                    data: PartialRoomData {
+                        cycle: Some(cycle),
+                        ..Default::default()
+                    },
                 });
                 Ok(())
             }
@@ -769,9 +776,12 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                     *room.chart.write().await = Some(res);
                     room.on_state_change().await;
 
-                    send_room_event!("update_room", {
-                        "room": room.id.to_string(),
-                        "data": json!({"chart": id})
+                    send_room_event!(UpdateRoom {
+                        room: room.id.clone(),
+                        data: PartialRoomData {
+                            chart: Some(id),
+                            ..Default::default()
+                        },
                     });
                     Ok(())
                 }
@@ -801,13 +811,12 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                 room.on_state_change().await;
                 room.check_all_ready().await;
 
-                let state_str = match *room.state.read().await {
-                    InternalRoomState::Playing { .. } => "PLAYING",
-                    _ => "WAITING_FOR_READY",
-                };
-                send_room_event!("update_room", {
-                    "room": room.id.to_string(),
-                    "data": json!({"state": state_str})
+                send_room_event!(UpdateRoom {
+                    room: room.id.clone(),
+                    data: PartialRoomData {
+                        state: Some(room.state.read().await.to_stripped()),
+                        ..Default::default()
+                    },
                 });
                 Ok(())
             }
@@ -830,12 +839,12 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                     room.check_all_ready().await;
 
                     if matches!(*room.state.read().await, InternalRoomState::Playing { .. }) {
-                        send_room_event!("start_round", {
-                            "room": room.id.to_string()
-                        });
-                        send_room_event!("update_room", {
-                            "room": room.id.to_string(),
-                            "data": json!({"state": "PLAYING"})
+                        send_room_event!(UpdateRoom {
+                            room: room.id.clone(),
+                            data: PartialRoomData {
+                                state: Some(StrippedRoomState::Playing),
+                                ..Default::default()
+                            },
                         });
                     }
                 }
@@ -908,14 +917,17 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
 
                     if matches!(*room.state.read().await, InternalRoomState::SelectChart) {
                         if let Some(round) = room.rounds.read().await.last() {
-                            send_room_event!("new_round", {
-                                "room": room.id.to_string(),
-                                "round": round,
+                            send_room_event!(NewRound {
+                                room: room.id.clone(),
+                                round: round.clone(),
                             });
                         }
-                        send_room_event!("update_room", {
-                            "room": room.id.to_string(),
-                            "data": json!({"state": "SELECTING_CHART"})
+                        send_room_event!(UpdateRoom {
+                            room: room.id.clone(),
+                            data: PartialRoomData {
+                                state: Some(StrippedRoomState::SelectingChart),
+                                ..Default::default()
+                            },
                         });
                     }
                 }
@@ -946,9 +958,12 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                         room.state.read().await.to_client(None),
                         RoomState::SelectChart(_)
                     ) {
-                        send_room_event!("update_room", {
-                            "room": room.id.to_string(),
-                            "data": json!({"state": "SELECTING_CHART"})
+                        send_room_event!(UpdateRoom {
+                            room: room.id.clone(),
+                            data: PartialRoomData {
+                                state: Some(StrippedRoomState::SelectingChart),
+                                ..Default::default()
+                            },
                         });
                     }
                 }
@@ -968,7 +983,7 @@ async fn process(user: Arc<User>, cmd: ClientCommand) -> Option<ServerCommand> {
                     for uid in room.users().await {
                         user_room_map.insert(uid.id, id.clone());
                     }
-                    info.insert(id.clone(), room.into_json().await);
+                    info.insert(id.clone(), room.into_data().await);
                 }
                 Ok((info, user_room_map))
             }

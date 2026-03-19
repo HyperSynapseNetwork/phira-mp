@@ -1,9 +1,10 @@
-use crate::{Chart, Record, User};
+use crate::{Chart, User};
 use anyhow::{Result, bail};
-use phira_mp_common::{ClientRoomState, Message, RoomId, RoomState, ServerCommand};
+use phira_mp_common::{
+    ClientRoomState, Message, Record, RoomData, RoomId, RoomState, RoundData, ServerCommand,
+    StrippedRoomState,
+};
 use rand::seq::IndexedRandom;
-use serde::Serialize;
-use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     ops::Deref,
@@ -38,12 +39,14 @@ impl InternalRoomState {
             Self::Playing { .. } => RoomState::Playing,
         }
     }
-}
 
-#[derive(Serialize)]
-pub struct RoundInfo {
-    chart: i32,
-    records: Vec<(i32, Record)>,
+    pub fn to_stripped(&self) -> StrippedRoomState {
+        match self {
+            Self::SelectChart => StrippedRoomState::SelectingChart,
+            Self::WaitForReady { .. } => StrippedRoomState::WaitingForReady,
+            Self::Playing { .. } => StrippedRoomState::Playing,
+        }
+    }
 }
 
 pub struct Room {
@@ -58,7 +61,7 @@ pub struct Room {
     users: RwLock<Vec<Weak<User>>>,
     monitors: RwLock<Vec<Weak<User>>>,
     pub chart: RwLock<Option<Chart>>,
-    pub rounds: RwLock<Vec<RoundInfo>>,
+    pub rounds: RwLock<Vec<RoundData>>,
 }
 
 impl Room {
@@ -274,7 +277,7 @@ impl Room {
                     self.send(Message::GameEnd).await;
                     let mut guard = self.state.write().await;
                     if let InternalRoomState::Playing { results, .. } = &mut *guard {
-                        self.rounds.write().await.push(RoundInfo {
+                        self.rounds.write().await.push(RoundData {
                             chart: self.chart.read().await.as_ref().map_or(-1, |c| c.id),
                             records: results.drain().collect(),
                         });
@@ -309,19 +312,15 @@ impl Room {
         }
     }
 
-    pub async fn into_json(&self) -> Value {
-        json!({
-            "host": self.host.read().await.upgrade().map_or(-1, |x| x.id),
-            "users": self.users().await.iter().map(|x| x.id).collect::<Vec<_>>(),
-            "lock": self.is_locked(),
-            "cycle": self.is_cycle(),
-            "chart": self.chart.read().await.as_ref().map(|x| x.id),
-            "state": match *self.state.read().await {
-                InternalRoomState::Playing { .. } => "PLAYING",
-                InternalRoomState::SelectChart => "SELECTING_CHART",
-                InternalRoomState::WaitForReady { .. } => "WAITING_FOR_READY",
-            },
-            "rounds": &*self.rounds.read().await,
-        })
+    pub async fn into_data(&self) -> RoomData {
+        RoomData {
+            host: self.host.read().await.upgrade().map_or(-1, |x| x.id),
+            users: self.users().await.iter().map(|x| x.id).collect::<Vec<_>>(),
+            lock: self.is_locked(),
+            cycle: self.is_cycle(),
+            chart: self.chart.read().await.as_ref().map(|x| x.id),
+            state: self.state.read().await.to_stripped(),
+            rounds: self.rounds.read().await.to_vec(),
+        }
     }
 }

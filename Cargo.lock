@@ -1214,6 +1214,7 @@ dependencies = [
  "half",
  "hkdf",
  "phira-mp-macros",
+ "serde",
  "serde_json",
  "sha2",
  "tap",

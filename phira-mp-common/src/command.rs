@@ -2,7 +2,8 @@ use crate::{BinaryData, BinaryReader, BinaryWriter};
 use anyhow::{Result, bail};
 use half::f16;
 use phira_mp_macros::BinaryData;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::{collections::HashMap, fmt::Display, ops::Deref, sync::Arc};
 
 pub type SResult<T> = Result<T, String>;
@@ -289,6 +290,117 @@ pub struct JoinRoomResponse {
     pub live: bool,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, BinaryData)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum StrippedRoomState {
+    SelectingChart,
+    WaitingForReady,
+    Playing,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, BinaryData)]
+pub struct RoomData {
+    pub host: i32,
+    pub users: Vec<i32>,
+    pub lock: bool,
+    pub cycle: bool,
+    pub chart: Option<i32>,
+    pub state: StrippedRoomState,
+    pub rounds: Vec<RoundData>,
+}
+
+impl RoomData {
+    pub fn update(&mut self, partial: PartialRoomData) {
+        self.host = partial.host.unwrap_or(self.host);
+        self.lock = partial.lock.unwrap_or(self.lock);
+        self.cycle = partial.cycle.unwrap_or(self.cycle);
+        self.chart = partial.chart.or(self.chart);
+        self.state = partial.state.unwrap_or(self.state);
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, BinaryData)]
+pub struct PartialRoomData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lock: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cycle: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chart: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<StrippedRoomState>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, BinaryData)]
+pub struct Record {
+    pub id: i32,
+    pub player: i32,
+    pub score: i32,
+    pub perfect: i32,
+    pub good: i32,
+    pub bad: i32,
+    pub miss: i32,
+    pub max_combo: i32,
+    pub accuracy: f32,
+    pub full_combo: bool,
+    pub std: f32,
+    pub std_score: f32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, BinaryData)]
+pub struct RoundData {
+    pub chart: i32,
+    pub records: Vec<(i32, Record)>,
+}
+
+#[derive(Clone, Debug, BinaryData)]
+pub enum RoomEvent {
+    CreateRoom { room: RoomId, data: RoomData },
+    UpdateRoom { room: RoomId, data: PartialRoomData },
+    JoinRoom { room: RoomId, user: i32 },
+    LeaveRoom { room: RoomId, user: i32 },
+    NewRound { room: RoomId, round: RoundData },
+}
+
+impl RoomEvent {
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::CreateRoom { .. } => "create_room",
+            Self::UpdateRoom { .. } => "update_room",
+            Self::JoinRoom { .. } => "join_room",
+            Self::LeaveRoom { .. } => "leave_room",
+            Self::NewRound { .. } => "new_round",
+        }
+    }
+
+    pub fn inner(self) -> Value {
+        match self {
+            Self::CreateRoom { room, data } => json!({
+                "room": room.0.to_string(),
+                "data": data,
+            }),
+            Self::UpdateRoom { room, data } => json!({
+                "room": room.0.to_string(),
+                "data": data,
+            }),
+            Self::JoinRoom { room, user } => json!({
+                "room": room.0.to_string(),
+                "user": user,
+            }),
+            Self::LeaveRoom { room, user } => json!({
+                "room": room.0.to_string(),
+                "user": user,
+            }),
+            Self::NewRound { room, round } => json!({
+                "room": room.0.to_string(),
+                "round": round,
+            }),
+        }
+    }
+}
+
 #[derive(Clone, Debug, BinaryData)]
 pub enum ServerCommand {
     Pong,
@@ -325,9 +437,7 @@ pub enum ServerCommand {
     Abort(SResult<()>),
 
     // command for console clients
-    RoomResponse(SResult<(HashMap<RoomId, Value>, HashMap<i32, RoomId>)>),
-    RoomEvent {
-        event_type: String,
-        data: Value,
-    },
+    RoomResponse(SResult<(HashMap<RoomId, RoomData>, HashMap<i32, RoomId>)>),
+    RoomEvent(RoomEvent),
+    UserVisit(i32),
 }

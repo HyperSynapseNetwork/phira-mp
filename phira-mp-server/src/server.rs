@@ -1,7 +1,7 @@
 use crate::{IdMap, Room, SafeMap, Session, User, vacant_entry};
 use anyhow::Result;
 use phira_mp_common::{RoomId, generate_secret_key};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
     env,
     fs::File,
@@ -29,22 +29,6 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self { monitors: vec![2] }
     }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Record {
-    pub id: i32,
-    pub player: i32,
-    pub score: i32,
-    pub perfect: i32,
-    pub good: i32,
-    pub bad: i32,
-    pub miss: i32,
-    pub max_combo: i32,
-    pub accuracy: f32,
-    pub full_combo: bool,
-    pub std: f32,
-    pub std_score: f32,
 }
 
 pub struct ServerState {
