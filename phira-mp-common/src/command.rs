@@ -352,7 +352,7 @@ pub struct Record {
 #[derive(Debug, Clone, Deserialize, Serialize, BinaryData)]
 pub struct RoundData {
     pub chart: i32,
-    pub records: Vec<(i32, Record)>,
+    pub records: Vec<Record>,
 }
 
 #[derive(Clone, Debug, BinaryData)]

@@ -279,7 +279,7 @@ impl Room {
                     if let InternalRoomState::Playing { results, .. } = &mut *guard {
                         self.rounds.write().await.push(RoundData {
                             chart: self.chart.read().await.as_ref().map_or(-1, |c| c.id),
-                            records: results.drain().collect(),
+                            records: results.drain().map(|r| r.1).collect(),
                         });
                         *guard = InternalRoomState::SelectChart;
                     } else {
